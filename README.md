@@ -1,5 +1,5 @@
 # baby-rootkit
-A baby Rootkit for UCAS course "Principle of Software Security"
+A baby Rootkit
 
 Works fine on Ubuntu 22.04 5.15.0-50-generic
 
