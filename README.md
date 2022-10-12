@@ -5,7 +5,7 @@ Works fine on Ubuntu 22.04 5.15.0-50-generic
 
 ### RUN
 ```
-make build
+make
 make install
 ```
 
