@@ -1,3 +1,4 @@
+ccflags-y := -std=gnu99
 obj-m := babyrootkit.o
 babyrootkit-objs := rootkit.o hook.o
 

