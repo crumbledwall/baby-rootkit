@@ -3,6 +3,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+#include <linux/kprobes.h>
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)) // Linux 5.11 内核中的 ftrace_func_t 结构已更改
 #define NEW_KERNEL 1
@@ -10,10 +11,6 @@
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,7,0) // Linux 5.7 内核中的 kallsyms_lookup_name 函数不再导出
 #define KPROBE_LOOKUP 1
-#include <linux/kprobes.h>
-static struct kprobe kp = {
-    .symbol_name = "kallsyms_lookup_name"
-};
 #endif
 
 #define HOOK(_name, _hook, _orig)	\

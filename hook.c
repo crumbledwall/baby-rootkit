@@ -5,6 +5,12 @@
 
 #include "hook.h"
 
+#ifdef KPROBE_LOOKUP
+static struct kprobe kp = {
+    .symbol_name = "kallsyms_lookup_name"
+};
+#endif
+
 int fh_resolve_hook_address(struct ftrace_hook *hook)
 {
 #ifdef KPROBE_LOOKUP
